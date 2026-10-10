@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# 로컬망에서 접속 가능하도록 0.0.0.0:8000 으로 실행합니다.
+# 설치가 끝난 뒤 서버만 실행합니다. 처음이라면 ./start.sh 를 사용하세요.
 set -e
 cd "$(dirname "$0")"
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
-exec python3 -m uvicorn app.main:app --host "$HOST" --port "$PORT" --timeout-keep-alive 120
+PY=python3; [ -x .venv/bin/python ] && PY=.venv/bin/python
+exec "$PY" -m uvicorn app.main:app --host "${HOST:-0.0.0.0}" --port "${PORT:-8000}" --timeout-keep-alive 120

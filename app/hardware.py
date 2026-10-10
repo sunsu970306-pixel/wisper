@@ -65,6 +65,9 @@ def _ram_bytes() -> int:
 
 def _gpus() -> list[dict]:
     try:
+        from . import cuda_libs
+
+        cuda_libs.load()  # pip 로 설치한 CUDA 라이브러리를 경로 설정 없이 사용
         import ctranslate2
 
         if ctranslate2.get_cuda_device_count() == 0:

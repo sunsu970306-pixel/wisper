@@ -4,6 +4,20 @@
 음성·통화 녹음 파일을 텍스트(txt / srt / vtt / json)로 변환하는 웹사이트입니다.
 같은 네트워크의 다른 PC·휴대폰 브라우저에서 `http://<서버IP>:8000` 으로 접속해 사용합니다.
 
+## 빠른 시작 (자동 설치)
+
+저장소를 받은 뒤 **실행 파일 하나만 실행**하면 아래 작업이 자동으로 진행됩니다.
+Python 패키지 설치, ffmpeg 설치, NVIDIA GPU 감지와 CUDA 라이브러리 설치, 사양에 맞는 모델 다운로드, 동작 점검, 서버 실행까지입니다.
+
+- **Windows**: `start.bat` 더블클릭
+- **Linux / macOS**: `./start.sh`
+
+브라우저에서 http://localhost:8000 이 열리고, 창에 같은 망 기기용 접속 주소가 표시됩니다.
+다음부터도 같은 파일을 실행하면 됩니다. 설치는 건너뛰고 바로 실행합니다.
+
+CUDA 라이브러리는 pip 패키지(`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`)로 설치하고, 앱이 자동으로 찾아 로드합니다.
+그래서 CUDA Toolkit 을 따로 설치하거나 PATH/LD_LIBRARY_PATH 를 설정할 필요가 없습니다. NVIDIA 드라이버만 있으면 됩니다.
+
 ## 대용량 통화 파일 대응
 
 | 문제 | 처리 방식 |
@@ -40,7 +54,7 @@ python3 -m app.hardware
 CPU 에서는 beam 1(greedy)과 배치 추론(BatchedInferencePipeline)으로 속도를 우선합니다.
 정확도가 더 필요하면 화면에서 `medium`/`turbo` 를 고르거나 `WHISPER_BEAM_SIZE=5` 로 지정하세요.
 
-## 설치
+## 수동 설치
 
 필요: Python 3.10+, ffmpeg
 
@@ -55,24 +69,23 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-**NVIDIA GPU 사용 시** (강력 추천 — CPU 대비 수십 배 빠름): CUDA 12 + cuDNN 9 가 필요합니다.
+**NVIDIA GPU 사용 시** (강력 추천 — CPU 대비 수십 배 빠름): NVIDIA 드라이버가 설치되어 있어야 합니다.
 ```bash
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12==9.*
-export LD_LIBRARY_PATH=$(python3 -c 'import os, nvidia.cublas.lib, nvidia.cudnn.lib; print(os.path.dirname(nvidia.cublas.lib.__file__) + ":" + os.path.dirname(nvidia.cudnn.lib.__file__))')
+pip install nvidia-cublas-cu12 "nvidia-cudnn-cu12==9.*"   # 경로 설정은 앱이 자동 처리
 ```
-GPU 가 있으면 자동으로 사용하며, 화면 상단에 `장치: CUDA` 로 표시됩니다.
+GPU 가 있으면 자동으로 사용하며, 화면 상단에 `CUDA` 로 표시됩니다.
 
 ## 실행
 
 ```bash
-./run.sh
+./run.sh   # 설치 후 서버만 실행
 # 또는: python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 - 이 PC: http://localhost:8000
 - 같은 망의 다른 기기: http://<이 PC의 IP>:8000 (방화벽에서 8000 포트 허용 필요)
 
 첫 변환 시 선택한 모델이 Hugging Face 에서 자동 다운로드됩니다(large-v3 약 3GB).
-인터넷이 없는 망이라면 다른 PC에서 모델 폴더(예: `Systran/faster-whisper-large-v3`)를 받아 두고
+**모델 미리 받기**: 인터넷이 없는 망이라면 다른 PC에서 모델 폴더(예: `Systran/faster-whisper-large-v3`)를 받아 두고
 `WHISPER_MODEL=/경로/faster-whisper-large-v3` 로 지정하면 됩니다.
 
 ## 설정 (환경변수)
@@ -109,6 +122,9 @@ app/
   jobs.py        작업 큐, ffmpeg 분할, faster-whisper 변환, 결과 파일 생성
   config.py      환경변수 설정 (auto 값은 hardware.py 추천으로 채움)
   hardware.py    CPU/RAM/GPU 감지 및 추천 설정
+  cuda_libs.py   pip 로 설치한 CUDA 라이브러리 자동 로드
+  prepare.py     실행 전 점검 (모델 다운로드 + 추론 테스트)
+start.bat / start.sh   자동 설치 + 실행
   static/index.html  웹 UI
 data/            업로드·작업 데이터 (자동 생성)
 ```
