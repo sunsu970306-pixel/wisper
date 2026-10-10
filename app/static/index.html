@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Whisper 음성 변환</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #6b7385; --line: #e3e6ec;
+    --accent: #2f6fed; --accent-soft: #e8effe; --ok: #18864b; --err: #c8372d; --warn: #b26a00;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #14171c; --card: #1d2128; --text: #e6e9ef; --muted: #98a0b0; --line: #2e333d;
+      --accent: #6d9bff; --accent-soft: #23304a; --ok: #4cc37e; --err: #ff6b5f; --warn: #f0a640; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", "Malgun Gothic", sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+  .card h2 { font-size: 16px; margin: 0 0 12px; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 34px 16px; text-align: center; cursor: pointer; transition: .15s; }
+  #drop.over, #drop:hover { border-color: var(--accent); background: var(--accent-soft); }
+  #drop b { color: var(--accent); }
+  .opts { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; align-items: end; }
+  label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  select, input[type=text] { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); min-width: 140px; }
+  button { font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  a.btn { font-size: 13px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--text); text-decoration: none; }
+  a.btn:hover { border-color: var(--accent); }
+  .item { border-top: 1px solid var(--line); padding: 12px 0; }
+  .item:first-child { border-top: 0; padding-top: 0; }
+  .row { display: flex; justify-content: space-between; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .name { font-weight: 600; word-break: break-all; }
+  .meta { color: var(--muted); font-size: 12.5px; }
+  .bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 8px 0 4px; }
+  .bar > div { height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+  .done .bar > div { background: var(--ok); }
+  .error .bar > div { background: var(--err); }
+  .badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+  .badge.done { background: transparent; color: var(--ok); border: 1px solid var(--ok); }
+  .badge.error { background: transparent; color: var(--err); border: 1px solid var(--err); }
+  .badge.cancelled { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .errmsg { color: var(--err); font-size: 13px; margin-top: 4px; white-space: pre-wrap; }
+  .preview { margin-top: 10px; max-height: 340px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+  .preview p { margin: 0 0 4px; }
+  .preview .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; margin-right: 8px; }
+  .empty { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎙️ Whisper 음성 → 텍스트 변환</h1>
+  <div class="sub" id="sysinfo">로딩 중…</div>
+
+  <section class="card">
+    <h2>1. 파일 업로드</h2>
+    <div id="drop">
+      <div>음성/통화 녹음 파일을 여기로 끌어다 놓거나 <b>클릭해서 선택</b>하세요</div>
+      <div class="meta">mp3, m4a, wav, amr, 3gp, ogg, flac, mp4 등 · 여러 개 선택 가능 · 대용량 파일은 조각으로 나눠 전송되며 끊겨도 이어서 올라갑니다</div>
+    </div>
+    <input type="file" id="file" multiple accept="audio/*,video/*,.amr,.3gp,.m4a" hidden>
+    <div class="opts">
+      <label>모델 <select id="model"></select></label>
+      <label>언어
+        <select id="language">
+          <option value="ko">한국어</option>
+          <option value="auto">자동 감지</option>
+          <option value="en">영어</option>
+          <option value="ja">일본어</option>
+          <option value="zh">중국어</option>
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>업로드 중</h2>
+    <div id="uploads"><div class="empty">진행 중인 업로드가 없습니다.</div></div>
+  </section>
+
+  <section class="card">
+    <h2>2. 변환 작업</h2>
+    <div id="jobs"><div class="empty">작업이 없습니다.</div></div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const PARALLEL = 3;          // 동시에 보낼 청크 수
+const MAX_RETRY = 8;         // 청크별 재시도 횟수
+let CFG = null;
+const uploadsState = new Map(); // key -> {file, id, sent, total, status, error}
+const openPreview = new Set();
+const previewCache = new Map(); // jobId -> segments[]
+
+function fmtBytes(n) {
+  if (n == null) return '';
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+}
+function fmtDur(s) {
+  if (s == null || !isFinite(s)) return '';
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return h ? `${h}시간 ${m}분` : m ? `${m}분 ${sec}초` : `${sec}초`;
+}
+function fmtClock(s) {
+  s = Math.floor(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+}
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function api(method, url, body) {
+  const opt = { method, headers: {} };
+  if (body instanceof Blob) opt.body = body;
+  else if (body !== undefined) { opt.body = JSON.stringify(body); opt.headers['Content-Type'] = 'application/json'; }
+  const r = await fetch(url, opt);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail || msg; } catch {}
+    const e = new Error(msg); e.status = r.status; throw e;
+  }
+  return r.json();
+}
+
+// ------------------------------------------------------------------ 업로드
+const resumeKey = (f) => `upload:${f.name}:${f.size}:${f.lastModified}`;
+function lsGet(k) { try { return localStorage.getItem(k); } catch { return null; } }
+function lsSet(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
+
+async function uploadFile(file) {
+  const key = resumeKey(file) + ':' + Math.random();
+  const st = { file, sent: 0, total: file.size, status: '준비 중', error: null };
+  uploadsState.set(key, st); renderUploads();
+  try {
+    // 같은 파일을 전에 올리다 끊겼으면 이어서 업로드
+    let meta = null;
+    const prev = lsGet(resumeKey(file));
+    if (prev) { try { meta = await api('GET', `/api/uploads/${prev}`); } catch { meta = null; } }
+    if (!meta) {
+      meta = await api('POST', '/api/uploads', { filename: file.name, size: file.size });
+      lsSet(resumeKey(file), meta.id);
+    } else {
+      st.status = '이어서 업로드';
+    }
+    const done = new Set(meta.received);
+    const todo = [];
+    for (let i = 0; i < meta.total_chunks; i++) if (!done.has(i)) todo.push(i);
+    const chunkLen = (i) => Math.min(meta.chunk_size, meta.size - i * meta.chunk_size);
+    st.sent = [...done].reduce((a, i) => a + chunkLen(i), 0);
+    st.status = '업로드 중'; renderUploads();
+
+    const started = Date.now(); const startSent = st.sent;
+    async function sendChunk(i) {
+      const blob = file.slice(i * meta.chunk_size, i * meta.chunk_size + chunkLen(i));
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await api('PUT', `/api/uploads/${meta.id}/chunks/${i}`, blob);
+          st.sent += blob.size;
+          const rate = (st.sent - startSent) / ((Date.now() - started) / 1000);
+          st.rate = rate; renderUploads();
+          return;
+        } catch (e) {
+          if (e.status === 404 || e.status === 400 || attempt >= MAX_RETRY) throw e;
+          st.status = `재시도 중 (${attempt + 1})`; renderUploads();
+          await sleep(Math.min(1000 * 2 ** attempt, 30000));
+          st.status = '업로드 중';
+        }
+      }
+    }
+    const workers = Array.from({ length: PARALLEL }, async () => {
+      while (todo.length) await sendChunk(todo.shift());
+    });
+    await Promise.all(workers);
+
+    st.status = '작업 등록 중'; renderUploads();
+    await api('POST', `/api/uploads/${meta.id}/complete`, { model: $('#model').value, language: $('#language').value });
+    lsSet(resumeKey(file), null);
+    uploadsState.delete(key);
+    renderUploads(); refreshJobs();
+  } catch (e) {
+    if (e.status === 404) lsSet(resumeKey(file), null);
+    st.status = '실패'; st.error = e.message + ' — 같은 파일을 다시 선택하면 받은 부분 이후부터 이어서 올립니다.';
+    renderUploads();
+  }
+}
+
+function renderUploads() {
+  const el = $('#uploads');
+  if (!uploadsState.size) { el.innerHTML = '<div class="empty">진행 중인 업로드가 없습니다.</div>'; return; }
+  el.innerHTML = [...uploadsState.entries()].map(([k, s]) => {
+    const pct = s.total ? s.sent / s.total * 100 : 0;
+    const eta = s.rate > 0 ? ` · 남은 시간 약 ${fmtDur((s.total - s.sent) / s.rate)}` : '';
+    return `<div class="item ${s.error ? 'error' : ''}">
+      <div class="row"><span class="name">${esc(s.file.name)}</span><span class="badge ${s.error ? 'error' : ''}">${esc(s.status)}</span></div>
+      <div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="meta">${fmtBytes(s.sent)} / ${fmtBytes(s.total)} (${pct.toFixed(1)}%)${s.rate ? ` · ${fmtBytes(s.rate)}/s` : ''}${eta}</div>
+      ${s.error ? `<div class="errmsg">${esc(s.error)}</div><div class="actions"><button data-dismiss="${esc(k)}">닫기</button></div>` : ''}
+    </div>`;
+  }).join('');
+}
+$('#uploads').addEventListener('click', (e) => {
+  const k = e.target.dataset.dismiss;
+  if (k) { uploadsState.delete(k); renderUploads(); }
+});
+
+async function handleFiles(files) {
+  for (const f of files) uploadFile(f); // 파일별로 병렬 진행 (서버 변환은 순서대로 처리)
+}
+const drop = $('#drop'), input = $('#file');
+drop.onclick = () => input.click();
+input.onchange = () => { handleFiles([...input.files]); input.value = ''; };
+drop.ondragover = (e) => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = (e) => { e.preventDefault(); drop.classList.remove('over'); handleFiles([...e.dataTransfer.files]); };
+window.addEventListener('beforeunload', (e) => {
+  if ([...uploadsState.values()].some((s) => !s.error)) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// ------------------------------------------------------------------ 작업 목록
+const STATUS = { queued: '대기', preparing: '준비 중', transcribing: '변환 중', done: '완료', error: '실패', cancelled: '취소됨' };
+let jobsCache = [];
+
+async function refreshJobs() {
+  try { jobsCache = await api('GET', '/api/jobs'); } catch { return; }
+  for (const id of openPreview) await loadPreview(id);
+  renderJobs();
+}
+
+async function loadPreview(id) {
+  const cur = previewCache.get(id) || [];
+  try {
+    const r = await api('GET', `/api/jobs/${id}/segments?offset=${cur.length}`);
+    previewCache.set(id, cur.concat(r.segments));
+  } catch {}
+}
+
+function renderJobs() {
+  const el = $('#jobs');
+  if (!jobsCache.length) { el.innerHTML = '<div class="empty">작업이 없습니다.</div>'; return; }
+  // 미리보기 스크롤 위치 보존
+  const scroll = {};
+  el.querySelectorAll('.preview').forEach((p) => {
+    scroll[p.dataset.id] = { top: p.scrollTop, atBottom: p.scrollTop + p.clientHeight >= p.scrollHeight - 8 };
+  });
+  el.innerHTML = jobsCache.map((j) => {
+    const pct = (j.progress || 0) * 100;
+    const active = ['queued', 'preparing', 'transcribing'].includes(j.status);
+    const info = [
+      fmtBytes(j.size),
+      j.duration ? `길이 ${fmtDur(j.duration)}` : '',
+      `모델 ${j.model}`,
+      `언어 ${j.language === 'auto' ? (j.detected_language ? `자동(${j.detected_language})` : '자동') : j.language}`,
+      j.parts_total > 1 ? `조각 ${j.parts_done || 0}/${j.parts_total}` : '',
+      j.eta_seconds ? `남은 시간 약 ${fmtDur(j.eta_seconds)}` : '',
+      j.status === 'done' && j.finished ? `완료 ${new Date(j.finished * 1000).toLocaleString()}` : '',
+    ].filter(Boolean).join(' · ');
+    const dl = j.status === 'done' ? ['txt', 'ts.txt', 'srt', 'vtt', 'json'].map((f) =>
+      `<a class="btn" href="/api/jobs/${j.id}/download/${f}">${f === 'ts.txt' ? 'TXT(시간표시)' : f.toUpperCase()}</a>`).join('') : '';
+    const segs = previewCache.get(j.id) || [];
+    const preview = openPreview.has(j.id) ? `<div class="preview" data-id="${j.id}">${
+      segs.length ? segs.map((s) => `<p><span class="t">${fmtClock(s.start)}</span>${esc(s.text)}</p>`).join('') : '<div class="empty">아직 인식된 문장이 없습니다.</div>'
+    }</div>` : '';
+    return `<div class="item ${j.status}">
+      <div class="row"><span class="name">${esc(j.filename)}</span><span class="badge ${j.status}">${STATUS[j.status] || j.status}${active && j.stage ? ' · ' + esc(j.stage) : ''}</span></div>
+      <div class="bar"><div style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="meta">${pct.toFixed(1)}% · ${info}</div>
+      ${j.error ? `<div class="errmsg">${esc(j.error)}</div>` : ''}
+      <div class="actions">
+        ${dl}
+        ${j.status !== 'queued' ? `<button data-act="preview" data-id="${j.id}">${openPreview.has(j.id) ? '미리보기 닫기' : '미리보기'}</button>` : ''}
+        ${active ? `<button data-act="cancel" data-id="${j.id}">취소</button>` : ''}
+        ${['error', 'cancelled'].includes(j.status) ? `<button data-act="retry" data-id="${j.id}">다시 시도</button>` : ''}
+        ${!['preparing', 'transcribing'].includes(j.status) ? `<button data-act="delete" data-id="${j.id}">삭제</button>` : ''}
+      </div>
+      ${preview}
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.preview').forEach((p) => {
+    const s = scroll[p.dataset.id];
+    if (!s || s.atBottom) p.scrollTop = p.scrollHeight; else p.scrollTop = s.top;
+  });
+}
+
+$('#jobs').addEventListener('click', async (e) => {
+  const { act, id } = e.target.dataset;
+  if (!act) return;
+  try {
+    if (act === 'preview') {
+      if (openPreview.has(id)) openPreview.delete(id);
+      else { openPreview.add(id); await loadPreview(id); }
+      renderJobs(); return;
+    }
+    if (act === 'cancel' && !confirm('이 작업을 취소할까요?')) return;
+    if (act === 'delete' && !confirm('작업과 결과 파일, 원본 파일을 모두 삭제할까요?')) return;
+    if (act === 'cancel') await api('POST', `/api/jobs/${id}/cancel`);
+    if (act === 'retry') await api('POST', `/api/jobs/${id}/retry`);
+    if (act === 'delete') { await api('DELETE', `/api/jobs/${id}`); openPreview.delete(id); previewCache.delete(id); }
+  } catch (err) { alert(err.message); }
+  refreshJobs();
+});
+
+// ------------------------------------------------------------------ 시작
+(async () => {
+  CFG = await api('GET', '/api/config');
+  const models = CFG.models.includes(CFG.default_model) ? CFG.models : [CFG.default_model, ...CFG.models];
+  $('#model').innerHTML = models.map((m) => `<option ${m === CFG.default_model ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  const lang = $('#language');
+  if (![...lang.options].some((o) => o.value === CFG.default_language)) lang.add(new Option(CFG.default_language, CFG.default_language));
+  lang.value = CFG.default_language;
+  $('#sysinfo').textContent = `장치: ${CFG.device.toUpperCase()} (${CFG.compute_type}) · 남은 디스크 ${fmtBytes(CFG.free_disk_bytes)}` +
+    (CFG.max_upload_bytes ? ` · 최대 파일 ${fmtBytes(CFG.max_upload_bytes)}` : '');
+  await refreshJobs();
+  setInterval(refreshJobs, 2000);
+})();
+</script>
+</body>
+</html>
