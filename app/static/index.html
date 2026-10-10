@@ -50,12 +50,20 @@
   .preview p { margin: 0 0 4px; }
   .preview .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; margin-right: 8px; }
   .empty { color: var(--muted); font-size: 14px; }
+  .spec { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 14px; }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; word-break: break-word; }
 </style>
 </head>
 <body>
 <main>
   <h1>🎙️ Whisper 음성 → 텍스트 변환</h1>
-  <div class="sub" id="sysinfo">로딩 중…</div>
+  <div class="sub">이 컴퓨터에서 Whisper 모델을 직접 돌려 변환합니다. 파일은 외부로 전송되지 않습니다.</div>
+
+  <section class="card">
+    <h2>이 컴퓨터 사양 · 적용된 설정</h2>
+    <div id="sysinfo">로딩 중…</div>
+  </section>
 
   <section class="card">
     <h2>1. 파일 업로드</h2>
@@ -76,6 +84,7 @@
         </select>
       </label>
     </div>
+    <div class="meta" id="modelhint" style="margin-top:6px"></div>
   </section>
 
   <section class="card">
@@ -260,7 +269,7 @@ function renderJobs() {
       `모델 ${j.model}`,
       `언어 ${j.language === 'auto' ? (j.detected_language ? `자동(${j.detected_language})` : '자동') : j.language}`,
       j.parts_total > 1 ? `조각 ${j.parts_done || 0}/${j.parts_total}` : '',
-      j.eta_seconds ? `남은 시간 약 ${fmtDur(j.eta_seconds)}` : '',
+      j.eta_seconds ? `${j.status === 'queued' ? '예상 소요' : '남은 시간'} 약 ${fmtDur(j.eta_seconds)}${j.eta_estimated ? ' (측정 속도 기준)' : ''}` : '',
       j.status === 'done' && j.finished ? `완료 ${new Date(j.finished * 1000).toLocaleString()}` : '',
     ].filter(Boolean).join(' · ');
     const dl = j.status === 'done' ? ['txt', 'ts.txt', 'srt', 'vtt', 'json'].map((f) =>
@@ -311,13 +320,36 @@ $('#jobs').addEventListener('click', async (e) => {
 // ------------------------------------------------------------------ 시작
 (async () => {
   CFG = await api('GET', '/api/config');
+  const R = CFG.recommended, H = CFG.hardware;
   const models = CFG.models.includes(CFG.default_model) ? CFG.models : [CFG.default_model, ...CFG.models];
-  $('#model').innerHTML = models.map((m) => `<option ${m === CFG.default_model ? 'selected' : ''}>${esc(m)}</option>`).join('');
+  const label = (m) => {
+    const tags = [];
+    if (m === R.model) tags.push('추천');
+    if (CFG.measured_rtf[m]) tags.push(`1시간 ≈ ${fmtDur(CFG.measured_rtf[m] * 3600)}`);
+    if (R.model_notes[m]) tags.push(R.model_notes[m]);
+    return tags.length ? `${m} (${tags.join(' · ')})` : m;
+  };
+  $('#model').innerHTML = models.map((m) => `<option value="${esc(m)}" ${m === CFG.default_model ? 'selected' : ''}>${esc(label(m))}</option>`).join('');
+  const hint = () => {
+    const m = $('#model').value;
+    $('#modelhint').textContent = R.model_notes[m]
+      ? `⚠ ${m}: ${R.model_notes[m]} — 이 컴퓨터에서는 ${R.model} 모델을 추천합니다.`
+      : (CFG.measured_rtf[m] ? `이 컴퓨터 실측: 녹음 1시간당 약 ${fmtDur(CFG.measured_rtf[m] * 3600)} 소요` : '');
+  };
+  $('#model').onchange = hint; hint();
   const lang = $('#language');
   if (![...lang.options].some((o) => o.value === CFG.default_language)) lang.add(new Option(CFG.default_language, CFG.default_language));
   lang.value = CFG.default_language;
-  $('#sysinfo').textContent = `장치: ${CFG.device.toUpperCase()} (${CFG.compute_type}) · 남은 디스크 ${fmtBytes(CFG.free_disk_bytes)}` +
-    (CFG.max_upload_bytes ? ` · 최대 파일 ${fmtBytes(CFG.max_upload_bytes)}` : '');
+  const gpu = H.gpus.length ? H.gpus.map((g) => `${g.name}${g.vram_bytes ? ` (${fmtBytes(g.vram_bytes)})` : ''}`).join(', ') : '없음 (CPU로 처리)';
+  const rows = [
+    ['CPU', `${H.cpu} · ${H.cpu_cores}코어${H.cpu_flags.length ? ' · ' + H.cpu_flags.join(' ') : ''}`],
+    ['메모리', fmtBytes(H.ram_bytes)],
+    ['GPU', gpu],
+    ['디스크 여유', fmtBytes(CFG.free_disk_bytes) + (CFG.max_upload_bytes ? ` · 최대 파일 ${fmtBytes(CFG.max_upload_bytes)}` : '')],
+    ['적용 설정', `${CFG.device.toUpperCase()} · ${CFG.compute_type} · beam ${CFG.beam_size} · batch ${CFG.batch_size} · 스레드 ${CFG.cpu_threads}`],
+    ['기본 모델', `${CFG.default_model} — ${R.reason}`],
+  ];
+  $('#sysinfo').innerHTML = '<dl class="spec" style="margin:0">' + rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('') + '</dl>';
   await refreshJobs();
   setInterval(refreshJobs, 2000);
 })();

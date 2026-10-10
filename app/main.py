@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import config, jobs, uploads
+from . import config, hardware, jobs, uploads
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -22,6 +22,12 @@ def _startup() -> None:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise RuntimeError("ffmpeg/ffprobe 가 설치되어 있어야 합니다.")
     uploads.cleanup_stale()
+    hw, rec = hardware.detect(), hardware.recommend()
+    logging.info(
+        "사양: %s · %d코어 · RAM %.1fGB · GPU %s → 모델=%s device=%s compute=%s beam=%d batch=%d threads=%d",
+        hw["cpu"], hw["cpu_cores"], hw["ram_bytes"] / hardware.GB, ", ".join(g["name"] for g in hw["gpus"]) or "없음",
+        config.MODEL, config.DEVICE, config.COMPUTE_TYPE, config.BEAM_SIZE, config.BATCH_SIZE, config.CPU_THREADS,
+    )
     jobs.load_existing()
     jobs.start_worker()
 
@@ -42,6 +48,10 @@ def get_config():
         "max_upload_bytes": config.MAX_UPLOAD_BYTES,
         "free_disk_bytes": shutil.disk_usage(config.DATA_DIR).free,
         **jobs.device_info(),
+        "hardware": hardware.detect(),
+        "recommended": hardware.recommend(),
+        # 이 컴퓨터에서 실측한 모델별 처리 속도 (오디오 1초당 처리 초)
+        "measured_rtf": {m: jobs.model_rtf(m) for m in jobs.MODELS if jobs.model_rtf(m)},
     }
 
 

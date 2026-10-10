@@ -17,6 +17,29 @@
 
 지원 포맷: ffmpeg 가 읽을 수 있는 모든 포맷 (mp3, m4a, wav, amr, 3gp, ogg, flac, aac, mp4 영상 등)
 
+## 컴퓨터 사양 자동 맞춤
+
+서버가 시작할 때 CPU 코어 수·명령어 세트, RAM, GPU(VRAM)를 감지해서 모델/정밀도/스레드/배치 크기를 자동으로 고릅니다.
+웹 화면 상단에 감지된 사양과 적용된 설정이 표시되고, 모델 목록에 "추천" / "CPU 에서 느림" 등의 안내가 붙습니다.
+변환을 한 번 하고 나면 **이 컴퓨터에서 실측한 속도(녹음 1시간당 처리 시간)** 가 모델 목록과 대기 작업의 예상 시간에 반영됩니다.
+
+사양만 확인하려면:
+```bash
+python3 -m app.hardware
+```
+
+| 사양 | 자동 선택 |
+|---|---|
+| GPU VRAM 10GB 이상 | `large-v3`, float16, batch 16 |
+| GPU VRAM 6~10GB | `large-v3`, int8_float16, batch 8 |
+| GPU VRAM 4~6GB | `turbo`, int8_float16, batch 4 |
+| CPU 12코어 이상 + RAM 16GB | `turbo`, int8, beam 1, batch 8 |
+| CPU 4코어 이상 + RAM 8GB | `small`, int8, beam 1, batch 8 |
+| 그 이하 | `base`, int8, beam 1, batch 4 |
+
+CPU 에서는 beam 1(greedy)과 배치 추론(BatchedInferencePipeline)으로 속도를 우선합니다.
+정확도가 더 필요하면 화면에서 `medium`/`turbo` 를 고르거나 `WHISPER_BEAM_SIZE=5` 로 지정하세요.
+
 ## 설치
 
 필요: Python 3.10+, ffmpeg
@@ -56,17 +79,18 @@ GPU 가 있으면 자동으로 사용하며, 화면 상단에 `장치: CUDA` 로
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
-| `WHISPER_MODEL` | `large-v3` | 기본 모델. `tiny`/`base`/`small`/`medium`/`large-v3`/`turbo` 또는 로컬 경로 |
+| `WHISPER_MODEL` | `auto` | 기본 모델. `auto`=사양에 맞춰 선택, 또는 `tiny`/`base`/`small`/`medium`/`large-v3`/`turbo`/로컬 경로 |
 | `WHISPER_DEVICE` | `auto` | `auto` / `cuda` / `cpu` |
-| `WHISPER_COMPUTE_TYPE` | `default` | GPU=`float16`, CPU=`int8` 자동. VRAM 부족 시 `int8_float16` |
+| `WHISPER_COMPUTE_TYPE` | `auto` | GPU=`float16`/`int8_float16`, CPU=`int8` 자동 |
 | `WHISPER_LANGUAGE` | `ko` | 기본 언어 (`auto` = 자동 감지) |
-| `WHISPER_BEAM_SIZE` | `5` | 낮추면 빠르고 정확도 약간 하락 |
+| `WHISPER_BEAM_SIZE` | `0`(자동) | GPU 5, CPU 1. 높이면 정확도↑ 속도↓ |
+| `WHISPER_BATCH_SIZE` | `0`(자동) | 배치 추론 크기. `1` 이면 배치 끔 |
 | `WHISPER_SEGMENT_SECONDS` | `1200` | 분할 처리 단위(초) |
 | `WHISPER_CHUNK_SIZE` | `16777216` | 업로드 조각 크기(바이트) |
 | `WHISPER_MAX_UPLOAD_BYTES` | `0` | 최대 업로드 크기(0=무제한) |
 | `WHISPER_DATA_DIR` | `./data` | 업로드·작업·결과 저장 위치 (디스크 여유 공간 충분한 곳으로) |
 | `WHISPER_MODEL_DIR` | (HF 캐시) | 모델 다운로드 위치 |
-| `WHISPER_CPU_THREADS` | `0` | CPU 스레드 수 (0=자동) |
+| `WHISPER_CPU_THREADS` | `0` | CPU 스레드 수 (0=감지된 코어 수) |
 | `WHISPER_DELETE_SOURCE` | `false` | 변환 완료 후 원본 음성 삭제 |
 
 ### 모델 선택 가이드
@@ -83,7 +107,8 @@ app/
   main.py        FastAPI 라우트 (업로드 / 작업 / 다운로드)
   uploads.py     이어받기 가능한 청크 업로드
   jobs.py        작업 큐, ffmpeg 분할, faster-whisper 변환, 결과 파일 생성
-  config.py      환경변수 설정
+  config.py      환경변수 설정 (auto 값은 hardware.py 추천으로 채움)
+  hardware.py    CPU/RAM/GPU 감지 및 추천 설정
   static/index.html  웹 UI
 data/            업로드·작업 데이터 (자동 생성)
 ```

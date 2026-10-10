@@ -70,6 +70,11 @@ def public(job: dict) -> dict:
         done_frac = j["progress"] - j.get("progress_at_start", 0)
         if done_frac > 0.005:
             j["eta_seconds"] = elapsed / done_frac * (1 - j["progress"])
+    if "eta_seconds" not in j and j["status"] in ACTIVE and j.get("duration"):
+        rtf = model_rtf(j["model"])  # 이 컴퓨터에서 측정된 속도 기반 추정
+        if rtf:
+            j["eta_seconds"] = rtf * j["duration"] * (1 - j.get("progress", 0))
+            j["eta_estimated"] = True
     return j
 
 
@@ -95,7 +100,7 @@ def segments(job_id: str, offset: int = 0) -> list:
         return live[offset:]
 
 
-def create(filename: str, move_source, language: str, model: str, timestamps_in_txt: bool = False) -> dict:
+def create(filename: str, move_source, language: str, model: str) -> dict:
     job_id = uuid.uuid4().hex
     d = config.JOB_DIR / job_id
     d.mkdir(parents=True)
@@ -112,7 +117,7 @@ def create(filename: str, move_source, language: str, model: str, timestamps_in_
         "status": "queued",
         "stage": "대기 중",
         "progress": 0.0,
-        "duration": None,
+        "duration": _probe_duration(source),  # 대기 중에도 예상 시간 표시용
         "created": time.time(),
         "finished": None,
         "error": None,
@@ -200,45 +205,78 @@ _model = None
 _model_key = None
 
 
-def _resolve_device() -> tuple[str, str]:
-    device = config.DEVICE
-    if device == "auto":
-        try:
-            import ctranslate2
-
-            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
-        except Exception:
-            device = "cpu"
-    compute = config.COMPUTE_TYPE
-    if compute == "default":
-        compute = "float16" if device == "cuda" else "int8"
-    return device, compute
-
-
 def get_model(name: str):
+    """모델을 로드해 캐시한다. 배치 크기가 2 이상이면 BatchedInferencePipeline 으로 감싼다."""
     global _model, _model_key
-    device, compute = _resolve_device()
-    key = (name, device, compute)
+    key = (name, config.DEVICE, config.COMPUTE_TYPE)
     if _model is not None and _model_key == key:
         return _model
-    from faster_whisper import WhisperModel
+    from faster_whisper import BatchedInferencePipeline, WhisperModel
 
     _model = None  # 이전 모델 메모리 해제
-    log.info("모델 로딩: %s (device=%s, compute_type=%s)", name, device, compute)
-    _model = WhisperModel(
+    log.info(
+        "모델 로딩: %s (device=%s, compute_type=%s, threads=%d, batch=%d)",
+        name, config.DEVICE, config.COMPUTE_TYPE, config.CPU_THREADS, config.BATCH_SIZE,
+    )
+    model = WhisperModel(
         name,
-        device=device,
-        compute_type=compute,
+        device=config.DEVICE,
+        compute_type=config.COMPUTE_TYPE,
         cpu_threads=config.CPU_THREADS,
         download_root=config.MODEL_DIR,
     )
+    _model = BatchedInferencePipeline(model) if config.BATCH_SIZE > 1 else model
     _model_key = key
     return _model
 
 
 def device_info() -> dict:
-    device, compute = _resolve_device()
-    return {"device": device, "compute_type": compute}
+    return {
+        "device": config.DEVICE,
+        "compute_type": config.COMPUTE_TYPE,
+        "beam_size": config.BEAM_SIZE,
+        "batch_size": config.BATCH_SIZE,
+        "cpu_threads": config.CPU_THREADS,
+    }
+
+
+# --------------------------------------------------------------------------- 속도 기록
+# 이 컴퓨터에서 실제로 측정한 처리 속도(오디오 1초당 처리 시간)를 모델별로 저장해
+# 대기 중인 작업의 예상 소요 시간과 모델 선택 안내에 사용한다.
+
+_SPEED_FILE = config.DATA_DIR / "speed.json"
+
+
+_speed_cache: dict | None = None
+
+
+def speed_stats() -> dict:
+    global _speed_cache
+    if _speed_cache is None:
+        try:
+            _speed_cache = json.loads(_SPEED_FILE.read_text())
+        except (OSError, json.JSONDecodeError):
+            _speed_cache = {}
+    return _speed_cache
+
+
+def _record_speed(model: str, audio_seconds: float, elapsed: float) -> None:
+    if audio_seconds < 10 or elapsed <= 0:
+        return
+    stats = speed_stats()
+    key = f"{model}|{config.DEVICE}|{config.COMPUTE_TYPE}"
+    cur = stats.get(key, {"audio_seconds": 0.0, "elapsed": 0.0})
+    cur["audio_seconds"] += audio_seconds
+    cur["elapsed"] += elapsed
+    cur["rtf"] = cur["elapsed"] / cur["audio_seconds"]
+    stats[key] = cur  # 캐시 dict 를 직접 갱신
+    tmp = _SPEED_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(stats))
+    os.replace(tmp, _SPEED_FILE)
+
+
+def model_rtf(model: str) -> float | None:
+    return speed_stats().get(f"{model}|{config.DEVICE}|{config.COMPUTE_TYPE}", {}).get("rtf")
 
 
 # --------------------------------------------------------------------------- 오디오 처리
@@ -384,10 +422,13 @@ def _process(job_id: str) -> None:
             raise Cancelled()
         _update(job_id, stage=f"음성 인식 중 (조각 {idx + 1}/{len(parts)})", parts_done=idx)
 
+        part_started = time.time()
+        extra = {"batch_size": config.BATCH_SIZE} if config.BATCH_SIZE > 1 else {}
         seg_iter, info = model.transcribe(
             str(part),
             language=language,
             beam_size=config.BEAM_SIZE,
+            **extra,
             vad_filter=True,  # 무음 구간 건너뛰기 (통화 녹음의 대기음/정적에서 환각 방지)
             vad_parameters={"min_silence_duration_ms": 500},
             condition_on_previous_text=False,  # 긴 오디오에서 같은 문장 반복 루프 방지
@@ -416,6 +457,7 @@ def _process(job_id: str) -> None:
         os.replace(tmp, result_file)
         if part_segs:
             prev_tail = part_segs[-1]["text"]
+        _record_speed(job["model"], length, time.time() - part_started)
         offset += length
         _update(job_id, progress=min(offset / total, 0.999), parts_done=idx + 1)
 
